@@ -1,0 +1,39 @@
+{
+  "name": "jira-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Model Context Protocol server for Jira (Cloud, API token, issues-focused).",
+  "type": "module",
+  "main": "dist/index.js",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "ts-node src/index.ts",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "ping": "node scripts/ping.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "start:jira-min": "node scripts/minimal-server.mjs",
+    "start:confluence-min": "node scripts/confluence-minimal-server.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.18.1",
+    "@upstash/context7-mcp": "^1.0.17",
+    "undici": "^6.19.8",
+    "zod": "^3.23.8"
+  },
+  "peerDependencies": {},
+  "peerDependenciesMeta": {},
+  "devDependencies": {
+    "@types/node": "^20.12.7",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.4.5",
+    "vitest": "^1.6.0"
+  }
+}
