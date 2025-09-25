@@ -90,6 +90,20 @@
         "ATLASSIAN_API_TOKEN": "<token>"
       }
     }
+    ,
+    "reports-min": {
+      "command": "/usr/bin/node",
+      "args": ["/ABSOLUTE/PATH/projects/jira-mcp/scripts/report-minimal-server.mjs"],
+      "cwd": "/ABSOLUTE/PATH/projects/jira-mcp",
+      "transport": "stdio",
+      "env": {
+        "JIRA_BASE_URL": "https://your-domain.atlassian.net",
+        "JIRA_EMAIL": "you@example.com",
+        "JIRA_API_TOKEN": "<token>",
+        "CONFLUENCE_BASE_URL": "https://your-domain.atlassian.net/wiki",
+        "ATLASSIAN_EMAIL": "you@example.com",
+        "ATLASSIAN_API_TOKEN": "<token>"
+      }
+    }
   }
 }
-

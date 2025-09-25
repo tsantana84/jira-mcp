@@ -91,7 +91,7 @@ const SearchSchema = {
 
 server.tool(
   "confluence_search_pages",
-  "Confluence: Search pages with CQL",
+  "Confluence: Search pages (CQL) — find updated/created pages, by text, labels, space; supports storage/ADF body",
   SearchSchema,
   async ({ cql, limit, start, includeBody, bodyFormat, includeExcerpt, types, spaceKey, maxChars }) => {
     const baseUrl = requireEnv("CONFLUENCE_BASE_URL");

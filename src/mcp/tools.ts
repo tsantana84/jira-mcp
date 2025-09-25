@@ -31,7 +31,7 @@ export function registerTools(mcp: Mcp, config: Config) {
   // Expose only a single list/search tool
   mcp.tool(
     "jira_list_issues",
-    "Jira: List issues via JQL",
+    "Jira: List/search issues via JQL",
     SearchIssuesInput.shape,
     async (input: z.infer<typeof SearchIssuesInput>) => {
       const res = await client.searchIssues({ jql: input.jql, startAt: input.startAt, maxResults: input.limit, fields: input.fields });
@@ -42,6 +42,26 @@ export function registerTools(mcp: Mcp, config: Config) {
     }
   );
   registeredNames.push("jira_list_issues");
+
+  // Also expose project listing
+  mcp.tool(
+    "jira_list_projects",
+    "Jira: List projects",
+    ListProjectsInput.shape,
+    async (input: z.infer<typeof ListProjectsInput>) => {
+      const res = await client.listProjects(input.query, input.startAt, input.limit);
+      const projects = Array.isArray(res.values)
+        ? res.values.map((p: any) => ({ id: String(p.id), key: p.key, name: p.name }))
+        : [];
+      const total = typeof res.total === "number" ? res.total : projects.length;
+      const startAt = typeof res.startAt === "number" ? res.startAt : input.startAt ?? 0;
+      const maxResults = typeof res.maxResults === "number" ? res.maxResults : input.limit ?? 25;
+      const nextStartAt = startAt + maxResults < total ? startAt + maxResults : undefined;
+      const payload: z.infer<typeof ListProjectsOutput> = { projects, total, startAt, maxResults, ...(nextStartAt !== undefined ? { nextStartAt } : {}) } as any;
+      return { content: [{ type: "text", text: JSON.stringify(payload) }] };
+    }
+  );
+  registeredNames.push("jira_list_projects");
 
   // Return early: do not expose any other tools
   (mcp as any)._registeredToolNames = registeredNames.slice();

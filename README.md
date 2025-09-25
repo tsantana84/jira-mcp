@@ -1,118 +1,108 @@
-Jira MCP Server
+Jira + Confluence MCP Servers (Cloud)
 
-Scope
-- Jira Cloud only, API token auth (email + token)
-- Issues-focused tools: search, read, create, update, comment, list/perform transitions
-- No webhooks, boards/sprints, attachments, or links (for now)
+Simple, stdio-based MCP servers for Atlassian Jira and Confluence (Cloud, API token auth). No webhooks. Focus on issue search, boards, and Confluence search, plus a minimal “reports” server for daily briefs.
 
-Setup
-- Requirements: Node.js >= 18, npm
-- Env vars (required):
-  - `JIRA_BASE_URL` (e.g., https://your-domain.atlassian.net)
-  - `JIRA_EMAIL`
-  - `JIRA_API_TOKEN`
-- Env vars (optional):
-  - `DEFAULT_PROJECT_KEY`
-  - `DEFAULT_ISSUE_TYPE` (e.g., Task, Bug)
+Quickstart
+1) Prerequisites
+   - Node.js 18+
+   - Atlassian Cloud email + API token (same token works for Jira and Confluence)
 
-Install
-1) Install deps
-   npm install
-2) Build
-   npm run build
+2) Clone and install
+   - git clone https://github.com/your-org/jira-mcp.git
+   - cd jira-mcp
+   - npm install
+   - npm run build
 
-Run (stdio)
-- Dev (ts-node):
-  JIRA_BASE_URL=... JIRA_EMAIL=... JIRA_API_TOKEN=... npx ts-node src/index.ts
-- Built JS:
-  JIRA_BASE_URL=... JIRA_EMAIL=... JIRA_API_TOKEN=... node dist/index.js
- - Minimal Jira (known-good for MCP UIs):
-   JIRA_BASE_URL=... JIRA_EMAIL=... JIRA_API_TOKEN=... npm run start:jira-min
+3) Run a server (choose one)
+   - Minimal Jira (recommended to start)
+     JIRA_BASE_URL=https://<site>.atlassian.net \
+     JIRA_EMAIL=you@example.com \
+     JIRA_API_TOKEN=<token> \
+     npm run start:jira-min
 
-MCP Client Configuration
-- Example Claude Desktop `mcp.json` entry:
-  {
-    "mcpServers": {
-      "jira": {
-        "command": "node",
-        "args": ["dist/index.js"],
-        "env": {
-          "JIRA_BASE_URL": "https://your-domain.atlassian.net",
-          "JIRA_EMAIL": "you@example.com",
-          "JIRA_API_TOKEN": "<token>",
-          "DEFAULT_PROJECT_KEY": "ABC",
-          "DEFAULT_ISSUE_TYPE": "Task"
-        }
-      }
-    }
-  }
+   - Minimal Confluence
+     CONFLUENCE_BASE_URL=https://<site>.atlassian.net/wiki \
+     ATLASSIAN_EMAIL=you@example.com \
+     ATLASSIAN_API_TOKEN=<token> \
+     npm run start:confluence-min
 
-Available Tools (currently exposed)
-- `jira_list_issues(jql, limit?, startAt?, fields?)`
+   - Minimal Reports (Jira + Confluence)
+     JIRA_BASE_URL=https://<site>.atlassian.net \
+     JIRA_EMAIL=you@example.com \
+     JIRA_API_TOKEN=<token> \
+     CONFLUENCE_BASE_URL=https://<site>.atlassian.net/wiki \
+     ATLASSIAN_EMAIL=you@example.com \
+     ATLASSIAN_API_TOKEN=<token> \
+     npm run start:reports-min
 
-Notes
-- Other Jira operations (get_issue, create/update, comments, transitions, projects) are implemented but not exposed to the client to keep the surface minimal during initial setup. We can re-enable them later.
+4) Add to your MCP client config
+   - Use absolute paths. Example entries:
 
-Behavior & Safety
-- Mutating tools require `confirm=true`. If omitted/false, server returns a preview of the outbound Jira request instead of mutating.
-- Description/comment inputs are plain text; server wraps to minimal Atlassian ADF.
+   "mcpServers": {
+     "jira-min": {
+       "command": "node",
+       "args": ["/ABS/PATH/jira-mcp/scripts/minimal-server.mjs"],
+       "cwd": "/ABS/PATH/jira-mcp",
+       "transport": "stdio",
+       "env": { "JIRA_BASE_URL": "https://<site>.atlassian.net", "JIRA_EMAIL": "you@example.com", "JIRA_API_TOKEN": "<token>" }
+     },
+     "confluence-min": {
+       "command": "node",
+       "args": ["/ABS/PATH/jira-mcp/scripts/confluence-minimal-server.mjs"],
+       "cwd": "/ABS/PATH/jira-mcp",
+       "transport": "stdio",
+       "env": { "CONFLUENCE_BASE_URL": "https://<site>.atlassian.net/wiki", "ATLASSIAN_EMAIL": "you@example.com", "ATLASSIAN_API_TOKEN": "<token>" }
+     },
+     "reports-min": {
+       "command": "node",
+       "args": ["/ABS/PATH/jira-mcp/scripts/report-minimal-server.mjs"],
+       "cwd": "/ABS/PATH/jira-mcp",
+       "transport": "stdio",
+       "env": {
+         "JIRA_BASE_URL": "https://<site>.atlassian.net",
+         "JIRA_EMAIL": "you@example.com",
+         "JIRA_API_TOKEN": "<token>",
+         "CONFLUENCE_BASE_URL": "https://<site>.atlassian.net/wiki",
+         "ATLASSIAN_EMAIL": "you@example.com",
+         "ATLASSIAN_API_TOKEN": "<token>"
+       }
+     }
+   }
 
-Notes
-- HTTP calls are implemented via `undici` in `src/jira/client.ts`. Mutations respect `confirm=true` and otherwise return a preview payload.
-- Normalization helpers live in `src/jira/issues.ts`.
+5) Verify tools
+   - jira-min: jira_list_issues, jira_list_projects, jira_list_boards, jira_board_issues
+   - confluence-min: confluence_search_pages
+   - reports-min: ops_daily_brief, ops_shift_delta, ops_jira_review_radar
+   - Or run: npm run ping (requires Jira env vars) to sanity-check the Jira server.
 
-Development Tips
-- Start by implementing read-only calls (`search`, `get_issue`, `list_projects`, `list_transitions`).
-- Add retries for 429/5xx and respect Retry-After.
-- Pass `fields` to Jira for lean responses by default (e.g., summary-only).
+6) Gemini CLI users
+   - Copy the GEMINI.md file from this repo into the directory where you run the Gemini CLI. Gemini reads GEMINI.md to improve tool routing and parameter choices.
+   - If you work across multiple project folders, copy GEMINI.md into each folder where you’ll invoke Gemini.
 
-Confluence (Minimal) — Optional
-- You can use the same Atlassian email + API token for Confluence.
-- Base URL is different: `CONFLUENCE_BASE_URL=https://<site>.atlassian.net/wiki`.
-- A minimal stdio server is provided that exposes one tool: `confluence_search_pages`.
+Common calls (examples)
+- Jira: list issues with comments hydration
+  { "jql": "project=ABC AND status != Done ORDER BY updated DESC", "fields": "summary,assignee,comment", "includeComments": true }
 
-Run (Confluence minimal)
-- Build the repo (to install deps):
-  npm install && npm run build
-- Configure env:
-  CONFLUENCE_BASE_URL=https://<site>.atlassian.net/wiki
-  ATLASSIAN_EMAIL=you@example.com
-  ATLASSIAN_API_TOKEN=<token>
-- Start:
-  node scripts/confluence-minimal-server.mjs
+- Jira: list boards for a project
+  { "projectKeyOrId": "ABC", "limit": 25 }
 
-MCP config example (Confluence minimal)
-{
-  "mcpServers": {
-    "confluence-min": {
-      "command": "/usr/bin/node", // or your node path
-      "args": ["/absolute/path/to/scripts/confluence-minimal-server.mjs"],
-      "cwd": "/absolute/path/to/repo",
-      "transport": "stdio",
-      "env": {
-        "CONFLUENCE_BASE_URL": "https://your-domain.atlassian.net/wiki",
-        "ATLASSIAN_EMAIL": "you@example.com",
-        "ATLASSIAN_API_TOKEN": "<token>"
-      }
-    }
-  }
-}
+- Jira: issues for a board (exclude Done)
+  { "boardId": 123, "jqlAppend": "status != Done", "fields": "summary,assignee", "limit": 50 }
 
-Tool parameters
-- `confluence_search_pages` accepts:
-  - `cql` (string, required)
-  - `limit` (1–100), `start` (offset)
-  - `includeBody` (boolean), `bodyFormat` ("storage" | "atlas_doc")
-  - `includeExcerpt` (boolean, default true)
-  - `types` (["page" | "blogpost"]), default ["page"]
-  - `spaceKey` (string): convenience to append space=KEY to CQL if not present
-  - `maxChars` (truncate text), default 800
+- Confluence: search decisions/ADRs last 7d in ENG
+  { "cql": "lastmodified >= '2025-09-18' AND label in ('Decision','ADR') AND space = ENG", "limit": 25 }
 
-Client Config Examples
-- A full example with providers and MCP servers is in `examples/mcp.example.json`. Copy and adjust absolute paths and envs for your machine.
+- Reports: daily brief for last 24h (São Paulo)
+  { "from": "2025-09-24T12:00:00-03:00", "to": "2025-09-25T12:00:00-03:00", "projects": ["ABC","DMD"], "labelsBlocked": ["Blocked","Impeded"] }
+
+Where things live
+- Minimal servers: scripts/minimal-server.mjs, scripts/confluence-minimal-server.mjs, scripts/report-minimal-server.mjs
+- Jira client: src/jira/client.ts (HTTP + retries, Agile + Core APIs)
+- Issue normalization: src/jira/issues.ts
+- Main Jira server entry (optional): src/index.ts (exposes a minimal tool set)
 
 Troubleshooting
-- See TROUBLESHOOTING.md for common issues (tool caching, logs, 410/404 fixes, name collisions).
+- See TROUBLESHOOTING.md for common issues (tool list caching, logs not visible, 404 on Confluence without /wiki, Jira 410 search migration, name collisions).
 
 Security
-- Treat your Atlassian API token like a password. Rotate it if it appears in command history or logs.
+- Keep your Atlassian API token secret. Rotate it if it appears in shell history or logs.

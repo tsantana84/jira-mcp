@@ -17,7 +17,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "start:jira-min": "node scripts/minimal-server.mjs",
-    "start:confluence-min": "node scripts/confluence-minimal-server.mjs"
+    "start:confluence-min": "node scripts/confluence-minimal-server.mjs",
+    "start:reports-min": "node scripts/report-minimal-server.mjs"
   },
   "engines": {
     "node": ">=18"

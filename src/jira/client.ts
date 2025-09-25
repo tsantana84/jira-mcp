@@ -183,4 +183,90 @@ export class JiraClient {
   async transitionIssue(key: string, payload: any): Promise<void> {
     await this.request("POST", `/rest/api/3/issue/${encodeURIComponent(key)}/transitions`, payload);
   }
+
+  async getIssueChangelog(key: string, startAt?: number, maxResults?: number): Promise<{
+    startAt: number;
+    maxResults: number;
+    total: number;
+    histories: Array<{ id: string; created: string; items: any[]; author?: any }>;
+  }> {
+    const data = await this.request(
+      "GET",
+      `/rest/api/3/issue/${encodeURIComponent(key)}/changelog`,
+      undefined,
+      { startAt: startAt ?? 0, maxResults: maxResults ?? 100 }
+    );
+    return data;
+  }
+
+  async listComponents(projectKeyOrId: string, startAt?: number, maxResults?: number): Promise<{
+    startAt: number;
+    maxResults: number;
+    total: number;
+    values: Array<{ id: string; name: string; description?: string; lead?: any }>;
+  }> {
+    const data = await this.request(
+      "GET",
+      `/rest/api/3/project/${encodeURIComponent(projectKeyOrId)}/component`,
+      undefined,
+      { startAt: startAt ?? 0, maxResults: maxResults ?? 50 }
+    );
+    // Some sites return an array without paging; normalize
+    if (Array.isArray(data)) {
+      return { startAt: 0, maxResults: data.length, total: data.length, values: data } as any;
+    }
+    return data;
+  }
+
+  // ----- Agile (Boards) -----
+  async listBoards(params?: {
+    projectKeyOrId?: string | number;
+    type?: string; // scrum, kanban
+    name?: string;
+    startAt?: number;
+    maxResults?: number;
+  }): Promise<{ startAt: number; maxResults: number; total: number; values: any[] }> {
+    const data = await this.request(
+      "GET",
+      "/rest/agile/1.0/board",
+      undefined,
+      {
+        projectKeyOrId: params?.projectKeyOrId,
+        type: params?.type,
+        name: params?.name,
+        startAt: params?.startAt ?? 0,
+        maxResults: params?.maxResults ?? 25,
+      }
+    );
+    return data;
+  }
+
+  async getBoardFilter(boardId: string | number): Promise<{ id: number; name?: string; jql?: string; self?: string }> {
+    const data = await this.request("GET", `/rest/agile/1.0/board/${encodeURIComponent(String(boardId))}/filter`);
+    return data;
+  }
+
+  async getFilter(filterId: string | number): Promise<{ id: number; name: string; jql: string; owner?: any }> {
+    const data = await this.request("GET", `/rest/api/3/filter/${encodeURIComponent(String(filterId))}`);
+    return data;
+  }
+
+  async listBoardIssues(
+    boardId: string | number,
+    params?: { jql?: string; startAt?: number; maxResults?: number; fields?: string[] | "summary" | "all" }
+  ): Promise<{ startAt: number; maxResults: number; total?: number; issues: any[] }> {
+    const qp: Record<string, string | number | boolean | undefined> = {
+      jql: params?.jql,
+      startAt: params?.startAt ?? 0,
+      maxResults: params?.maxResults ?? 25,
+      fields: this.fieldsParam(params?.fields ?? "summary"),
+    };
+    const data = await this.request(
+      "GET",
+      `/rest/agile/1.0/board/${encodeURIComponent(String(boardId))}/issue`,
+      undefined,
+      qp
+    );
+    return data;
+  }
 }
