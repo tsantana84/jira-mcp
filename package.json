@@ -18,7 +18,11 @@
     "test:watch": "vitest",
     "start:jira-min": "node scripts/minimal-server.mjs",
     "start:confluence-min": "node scripts/confluence-minimal-server.mjs",
-    "start:reports-min": "node scripts/report-minimal-server.mjs"
+    "start:reports-min": "node scripts/report-minimal-server.mjs",
+    "setup:gemini": "node scripts/setup-gemini.js",
+    "gemini:config": "node scripts/gemini-config-generator.js",
+    "gemini:test": "npm run ping && echo '\\n[+] gemini cli test successful! your jira mcp server is properly configured.'",
+    "gemini:help": "cat GEMINI_SETUP.md"
   },
   "engines": {
     "node": ">=18"

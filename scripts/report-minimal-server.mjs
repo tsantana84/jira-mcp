@@ -53,7 +53,12 @@ function projJql(projects) { return projects && projects.length ? `project in ($
 server.tool(
   "ops_daily_brief",
   "Jira+Confluence: Daily brief (last 24h, summary, new issues, transitions, blocked, unassigned, decisions/ADRs)",
-  { from: Iso, to: Iso, projects: Projects, labelsBlocked: z.array(z.string()).optional().describe("Blocked labels or statuses") },
+  {
+    from: z.string().describe("ISO datetime for start of time window"),
+    to: z.string().describe("ISO datetime for end of time window"),
+    projects: z.array(z.string()).optional().describe("List of project keys to filter"),
+    labelsBlocked: z.array(z.string()).optional().describe("Blocked labels or statuses")
+  },
   async ({ from, to, projects, labelsBlocked }) => {
     const jc = getJira();
     const proj = projJql(projects);
@@ -99,7 +104,11 @@ server.tool(
 server.tool(
   "ops_shift_delta",
   "Jira+Confluence: What changed since I logged off (window delta: transitions, new/closed bugs, blocked, runbooks/decisions)",
-  { from: Iso, to: Iso, projects: Projects },
+  {
+    from: z.string().describe("ISO datetime for start of time window"),
+    to: z.string().describe("ISO datetime for end of time window"),
+    projects: z.array(z.string()).optional().describe("List of project keys to filter")
+  },
   async ({ from, to, projects }) => {
     const jc = getJira();
     const proj = projJql(projects);
