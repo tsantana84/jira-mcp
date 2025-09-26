@@ -38,6 +38,13 @@ function getShellConfigFile() {
 function validateUrl(url) {
   try {
     new URL(url);
+    // Check for duplicate .atlassian.net patterns
+    const atlassianPattern = /\.atlassian\.net/g;
+    const matches = url.match(atlassianPattern);
+    if (matches && matches.length > 1) {
+      console.log('[-] Please enter a valid Atlassian URL (https://company.atlassian.net)');
+      return false;
+    }
     return url.startsWith('https://') && url.includes('.atlassian.net');
   } catch {
     return false;
@@ -75,7 +82,7 @@ async function testJiraConnection(baseUrl, email, token) {
 }
 
 function addToShellConfig(configFile, envVars) {
-  console.log(`\n📝 Adding environment variables to ${configFile}...`);
+  console.log(`\n Adding environment variables to ${configFile}...`);
 
   const marker = '# Jira MCP Configuration';
   const configContent = envVars.map(([key, value]) => `export ${key}="${value}"`).join('\n');
@@ -150,7 +157,7 @@ async function main() {
   // Confluence URL (derive from Jira URL)
   const confluenceUrl = `${jiraUrl}/wiki`;
 
-  console.log('\\n📦 Configuration Summary:');
+  console.log('\\n Configuration Summary:');
   console.log(`   Jira URL: ${jiraUrl}`);
   console.log(`   Confluence URL: ${confluenceUrl}`);
   console.log(`   Email: ${email}`);

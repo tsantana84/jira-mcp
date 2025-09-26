@@ -185,9 +185,7 @@ function main() {
     console.log('\\nNext steps:');
     console.log('1. Test the configuration:');
     console.log('   npm run gemini:test');
-    console.log('2. Start using Gemini CLI:');
-    console.log('   gemini "show me open issues in project ABC"');
-    console.log('3. For help and examples:');
+    console.log('2. For help and examples:');
     console.log('   cat GEMINI_SETUP.md\n');
 
   } catch (error) {
