@@ -75,9 +75,44 @@ Quickstart
    - reports-min: ops_daily_brief, ops_shift_delta, ops_jira_review_radar
    - Or run: npm run ping (requires Jira env vars) to sanity-check the Jira server.
 
-6) Gemini CLI users
-   - Copy the GEMINI.md file from this repo into the directory where you run the Gemini CLI. Gemini reads GEMINI.md to improve tool routing and parameter choices.
-   - If you work across multiple project folders, copy GEMINI.md into each folder where you’ll invoke Gemini.
+## Using with Gemini CLI (Terminal AI Assistant)
+
+### Why Gemini CLI?
+Gemini CLI is Google's terminal-based AI assistant that lets you interact with AI using natural language directly from your command line. By connecting this Jira MCP server to Gemini CLI, you can:
+- Ask questions about your Jira projects in plain English
+- Search issues, boards, and Confluence pages without leaving your terminal
+- Get daily reports and project updates through conversational queries
+- Combine Jira data with other tools (like GitHub) in a single AI session
+
+
+### Quick Setup (3 steps)
+
+1. **Set your credentials** (secure, reusable across projects)
+   ```bash
+   npm run setup:gemini
+   ```
+   This interactive script will guide you through setting up environment variables for your Jira and Confluence credentials.
+
+2. **Configure Gemini CLI** (tell Gemini how to connect to your Jira server)
+   ```bash
+   npm run gemini:config
+   ```
+   This generates the proper configuration for Gemini CLI to use your Jira MCP server.
+
+3. **Ready to use** - Your Gemini CLI is now configured to work with your Jira MCP server
+
+### Detailed Setup
+See [GEMINI_SETUP.md](./GEMINI_SETUP.md) for:
+- Complete configuration options
+- Combining with GitHub MCP and other servers
+- Advanced usage examples and JQL patterns
+- Troubleshooting guide
+- Manual configuration steps
+
+### Legacy Gemini Setup
+If you prefer the manual approach:
+- Copy the GEMINI.md file from this repo into the directory where you run the Gemini CLI. Gemini reads GEMINI.md to improve tool routing and parameter choices.
+- If you work across multiple project folders, copy GEMINI.md into each folder where you'll invoke Gemini.
 
 Common calls (examples)
 - Jira: list issues with comments hydration
