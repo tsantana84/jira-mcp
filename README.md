@@ -85,7 +85,7 @@ Gemini CLI is Google's terminal-based AI assistant that lets you interact with A
 - Combine Jira data with other tools (like GitHub) in a single AI session
 
 
-### Quick Setup (3 steps)
+### Quick Setup
 
 1. **Set your credentials** (secure, reusable across projects)
    ```bash
@@ -99,7 +99,7 @@ Gemini CLI is Google's terminal-based AI assistant that lets you interact with A
    ```
    This generates the proper configuration for Gemini CLI to use your Jira MCP server.
 
-3. **Ready to use** - Your Gemini CLI is now configured to work with your Jira MCP server
+**Ready to use** - Your Gemini CLI is now configured to work with your Jira MCP server
 
 ### Detailed Setup
 See [GEMINI_SETUP.md](./GEMINI_SETUP.md) for:
