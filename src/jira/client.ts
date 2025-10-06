@@ -309,4 +309,47 @@ export class JiraClient {
     const data: any = await res.json();
     return data;
   }
+
+  async searchConfluencePages(
+    cql: string,
+    limit?: number,
+    start?: number
+  ): Promise<{
+    results: Array<{
+      content: {
+        id: string;
+        type: string;
+        title: string;
+        space?: { key: string };
+        _links?: { webui?: string };
+      };
+      excerpt?: string;
+    }>;
+    totalSize: number;
+  }> {
+    // build confluence search API URL
+    const url = new URL(`${this.confluenceBaseUrl}/rest/api/search`);
+    url.searchParams.set("cql", cql);
+    if (limit) url.searchParams.set("limit", String(limit));
+    if (start) url.searchParams.set("start", String(start));
+
+    const headers: Record<string, string> = {
+      Authorization: this.authHeader,
+      Accept: "application/json",
+    };
+
+    const res = await fetch(url, { method: "GET", headers });
+
+    if (!res.ok) {
+      let detail: any = undefined;
+      try { detail = await res.json(); } catch {}
+      throw new Error(`Confluence search API ${res.status} ${res.statusText}: ${JSON.stringify(detail || {})}`);
+    }
+
+    const data: any = await res.json();
+    return {
+      results: data.results || [],
+      totalSize: data.totalSize || 0,
+    };
+  }
 }

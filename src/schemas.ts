@@ -336,10 +336,46 @@ export const ConfluenceJiraLinksOutput = z.object({
   issueKeys: z.array(NonEmptyString).default([]),
 });
 
+/* confluence_search_pages */
+export const ConfluenceSearchPagesInput = z.object({
+  cql: NonEmptyString, // confluence query language (e.g., "text ~ 'keyword'")
+  limit: z.number().int().min(1).max(100).default(25),
+  start: z.number().int().min(0).default(0),
+});
+export const ConfluenceSearchResult = z.object({
+  id: NonEmptyString,
+  title: NonEmptyString,
+  type: NonEmptyString, // "page", "blogpost", etc.
+  excerpt: z.string().optional(), // search excerpt with highlights
+  url: z.string().optional(),
+  spaceKey: z.string().optional(),
+});
+export const ConfluenceSearchPagesOutput = z.object({
+  results: z.array(ConfluenceSearchResult),
+  totalSize: z.number().int().min(0),
+  start: z.number().int().min(0),
+  limit: z.number().int().min(1).max(100),
+});
+
+/* similar ticket (used by jira_find_similar_tickets and jira_dependency_analysis) */
+export const SimilarTicket = z.object({
+  key: NonEmptyString,
+  summary: NonEmptyString,
+  status: NonEmptyString,
+  matchReason: z.string(), // e.g., "shared component: demographics-service", "keyword: metrics"
+  confidenceScore: z.number().min(0).max(1), // 0-1 score based on match quality
+  labels: z.array(z.string()).default([]),
+  components: z.array(z.object({
+    id: NonEmptyString,
+    name: NonEmptyString,
+  })).default([]),
+});
+
 /* jira_dependency_analysis */
 export const DependencyAnalysisInput = z.object({
   issueKey: NonEmptyString,
   depth: z.number().int().min(1).max(10).default(3),
+  autoDiscover: z.boolean().default(false), // automatically search for similar tickets and confluence docs when ticket is sparse
 });
 export const DependencyBlocker = z.object({
   key: NonEmptyString,
@@ -389,13 +425,43 @@ export const DependencyAnalysisOutput = z.object({
       url: z.string().optional(),
     })).default([]),
     insights: DependencyInsights,
+    context_discovery: z.object({
+      is_sparse_ticket: z.boolean(),
+      similar_tickets: z.array(SimilarTicket).default([]),
+      confluence_results: z.array(ConfluenceSearchResult).default([]),
+      discovery_summary: z.string().optional(),
+    }).optional(), // only present when autoDiscover=true
   }),
   suggested_prompt: NonEmptyString,
   metadata: z.object({
     analyzed_at: IsoDateString,
     depth_traversed: z.number().int(),
     tool_version: z.string().default("1.0"),
+    auto_discover_enabled: z.boolean().default(false),
   }),
+});
+
+/* jira_find_similar_tickets */
+export const FindSimilarTicketsInput = z.object({
+  issueKey: NonEmptyString,
+  limit: z.number().int().min(1).max(50).default(10),
+  includeKeywords: z.boolean().default(true), // search by extracted keywords
+  includeComponents: z.boolean().default(true), // search by shared components
+  includeLabels: z.boolean().default(true), // search by shared labels
+  includeAssignee: z.boolean().default(false), // search tickets from same assignee
+  onlyClosedTickets: z.boolean().default(true), // only return closed tickets (more likely to have prs)
+});
+export const FindSimilarTicketsOutput = z.object({
+  sourceTicket: z.object({
+    key: NonEmptyString,
+    summary: NonEmptyString,
+    extractedKeywords: z.array(z.string()).default([]),
+    components: z.array(z.string()).default([]),
+    labels: z.array(z.string()).default([]),
+  }),
+  similarTickets: z.array(SimilarTicket).default([]),
+  searchStrategies: z.array(z.string()).default([]), // explains which strategies were used
+  totalFound: z.number().int().min(0),
 });
 
 /* Config schema (env) */

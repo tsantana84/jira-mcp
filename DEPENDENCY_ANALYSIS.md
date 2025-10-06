@@ -43,11 +43,13 @@ when using gemini cli with the jira mcp server configured:
 - identifies blockers with age analysis
 - extracts confluence documentation links from issue/comments
 - analyzes patterns (multiple blockers, circular deps, long-term blocks)
-- generates suggested code search prompt
+- **enhanced keyword extraction:** extracts technical terms, technology names, acronyms, domain terms, file paths
+- generates suggested code search prompt with historical ticket discovery section
 
 **input:**
 - `issueKey` (required): jira issue key (e.g., "PROJ-123")
 - `depth` (optional): traversal depth (1-10, default 3)
+- `autoDiscover` (optional): boolean, default false - when true, automatically searches for similar tickets and confluence docs if ticket is sparse (no components, minimal description, or no labels)
 
 **output structure:**
 ```json
@@ -138,6 +140,31 @@ when using gemini cli with the jira mcp server configured:
         "multiple blockers detected (2 issues blocking progress)",
         "long-term blockers (avg 38 days blocked)"
       ]
+    },
+    "context_discovery": {
+      "is_sparse_ticket": true,
+      "similar_tickets": [
+        {
+          "key": "PROJ-120",
+          "summary": "similar work from past",
+          "status": "closed",
+          "matchReason": "keyword: deployment",
+          "confidenceScore": 0.7,
+          "labels": ["deployment", "backend"],
+          "components": [{"id": "10100", "name": "api-service"}]
+        }
+      ],
+      "confluence_results": [
+        {
+          "id": "789012",
+          "title": "deployment architecture guide",
+          "type": "page",
+          "excerpt": "describes how to deploy api services using terraform...",
+          "url": "https://company.atlassian.net/wiki/spaces/ENG/pages/789012",
+          "spaceKey": "ENG"
+        }
+      ],
+      "discovery_summary": "found 3 similar tickets and 2 confluence pages"
     }
   },
   "suggested_prompt": "# code analysis for jira ticket: PROJ-123\n\n## ticket context\n**main ticket:** PROJ-123 - \"deployment blocked by infra config\"\n...\n\n## repository context\n**primary repository:** company/api-service\n**organization:** company\n\n## analysis tasks\n\n### 1. search github for related prs and commits\n**find prs mentioning jira tickets:**\n```bash\ngh pr list --repo company/api-service --search \"PROJ-123\" --state all --limit 10\ngh pr list --repo company/api-service --search \"INFRA-456\" --state closed --limit 5\n# then: gh pr diff <PR_NUMBER> to see how INFRA-456 was implemented\n```\n\n**search git history:**\n```bash\ngit log --all --grep=\"PROJ-123\" --oneline -20\ngit log --all --grep=\"terraform\" --oneline -10\n```\n\n### 2. search codebase for technical terms\n```bash\ngrep -r \"TerraformModule\" --include=\"*.java\" --include=\"*.kt\" -n\ngrep -r \"infrastructure\" --include=\"*.yaml\" -i\n```\n\n### 3. search organization for related repositories\n```bash\ngh search repos --owner company \"infrastructure\" --limit 10\ngh search repos --owner company \"schema OR migration\" --limit 10\ngh search repos --owner company \"pipeline OR etl\" --limit 10\n```\n\n### 4. check for database/schema dependencies\n```bash\nfind . -path \"*/migrations/*\" -o -name \"*migration*.sql\"\ngrep -r \"@Entity|@Table\" --include=\"*.java\"\n```\n\n### 5. identify cross-service impact\n```bash\ngh search repos --owner company \"api-service-client\" --limit 10\n```\n\n## output format\ncreate a file called `code_analysis.json` with structured findings including:\n- related_prs\n- related_commits\n- code_files_found\n- related_repositories\n- database_impact\n- cross_service_dependencies\n- implementation_patterns\n- recommendations\n\n**important:** use actual data from your searches. prioritize finding implementation patterns from closed related tickets.",
@@ -149,11 +176,15 @@ when using gemini cli with the jira mcp server configured:
 }
 ```
 
-**note:** the suggested_prompt is a complete, ready-to-use prompt for ai agents (gemini cli) with:
-- executable bash commands (`gh` cli, `git log`, `grep`, `find`)
-- github org/repo placeholders from env vars (or `{{YOUR_GITHUB_ORG}}` if not set)
-- technical terms extracted from jira descriptions/comments
-- structured json output format for code_analysis.json
+**notes:**
+
+- **context_discovery section:** only appears when `autoDiscover=true` and ticket is sparse (no components, minimal description, or no labels). contains automatically discovered similar tickets and confluence docs.
+
+- **suggested_prompt:** a complete, ready-to-use prompt for ai agents (gemini cli) with:
+  - executable bash commands (`gh` cli, `git log`, `grep`, `find`)
+  - github org/repo placeholders from env vars (or `{{YOUR_GITHUB_ORG}}` if not set)
+  - technical terms extracted from jira descriptions/comments
+  - structured json output format for code_analysis.json
 
 ### 2. jira_issue_relationships
 
@@ -287,9 +318,175 @@ when using gemini cli with the jira mcp server configured:
 }
 ```
 
+### 7. jira_find_similar_tickets
+
+**what it does:**
+- searches for similar tickets based on keywords, components, labels, and assignee
+- helps discover context when ticket has minimal information
+- returns confidence scores based on match quality
+- useful for finding historical work patterns and repository references
+
+**input:**
+- `issueKey`: jira issue key
+- `limit`: max results (1-50, default 10)
+- `includeKeywords`: search by extracted keywords (default true)
+- `includeComponents`: search by shared components (default true)
+- `includeLabels`: search by shared labels (default true)
+- `includeAssignee`: search tickets from same assignee (default false)
+- `onlyClosedTickets`: only return closed tickets (default true)
+
+**output:**
+```json
+{
+  "sourceTicket": {
+    "key": "PROJ-124",
+    "summary": "add metrics to provider",
+    "extractedKeywords": ["metrics", "provider", "api"],
+    "components": ["demographics-service"],
+    "labels": ["monitoring", "backend"]
+  },
+  "similarTickets": [
+    {
+      "key": "PROJ-122",
+      "summary": "add prometheus metrics to v3 endpoints",
+      "status": "closed",
+      "matchReason": "component: demographics-service, keyword: metrics",
+      "confidenceScore": 0.9,
+      "labels": ["monitoring", "metrics"],
+      "components": [{"id": "10100", "name": "demographics-service"}]
+    }
+  ],
+  "searchStrategies": ["component: demographics-service", "keyword: metrics"],
+  "totalFound": 5
+}
+```
+
+**use cases:**
+- ticket has no linked dependencies but needs context
+- discovering which repos/services a vague ticket refers to
+- finding implementation patterns from similar past work
+
+### 8. confluence_search_pages
+
+**what it does:**
+- searches confluence pages using cql (confluence query language)
+- finds architecture docs, runbooks, setup guides
+- helps discover repository references and technical context
+
+**input:**
+- `cql`: confluence query language (e.g., "text ~ 'keyword' AND type = page")
+- `limit`: max results (1-100, default 25)
+- `start`: pagination offset (default 0)
+
+**output:**
+```json
+{
+  "results": [
+    {
+      "id": "123456",
+      "title": "demographics service architecture",
+      "type": "page",
+      "excerpt": "the demographics service is deployed at github.com/company/demographics-api...",
+      "url": "https://company.atlassian.net/wiki/spaces/ENG/pages/123456",
+      "spaceKey": "ENG"
+    }
+  ],
+  "totalSize": 15,
+  "start": 0,
+  "limit": 25
+}
+```
+
+**common cql patterns:**
+```bash
+# search by text
+text ~ "demographics" AND type = page
+
+# search by title
+title ~ "architecture" AND space = ENG
+
+# search by label
+label = "runbook" AND type = page
+
+# combined search
+text ~ "metrics" AND (title ~ "architecture" OR title ~ "setup")
+```
+
 ---
 
 ## workflow examples
+
+### example 0: discovering context for vague tickets (new workflow)
+
+**scenario:** you receive ticket PROJ-124 "fix provider bug" with no description, no components, unclear which service it refers to
+
+**step 1: find similar tickets**
+
+via gemini cli:
+- ask: "use jira_find_similar_tickets to find context for PROJ-124"
+
+the ai will call the tool and discover:
+- 5 closed tickets mentioning "provider"
+- most have component "demographics-service"
+- similar ticket PROJ-122 was closed recently
+
+**step 2: review similar tickets for repo clues**
+
+the ai will:
+- review PROJ-122's description
+- find it mentions github.com/company/demographics-api
+- extract file paths like src/demographics/GeolocationProvider.java
+
+**step 3: search confluence for additional context**
+
+via gemini cli:
+- ask: "search confluence for 'provider architecture' docs"
+
+the ai will call `confluence_search_pages` and find:
+- architecture doc confirming demographics-api repo
+- runbook with setup instructions
+
+**step 4: run dependency analysis with discovered context**
+
+now that you know the repo, run standard dependency analysis:
+- ask: "analyze dependencies for PROJ-124 and generate code search prompt"
+
+**outcome:** went from zero context to full repo identification and actionable code search plan
+
+---
+
+**alternative: use autoDiscover for one-call convenience**
+
+instead of the manual 4-step workflow above, use autoDiscover to do steps 1-3 automatically:
+
+via gemini cli:
+- ask: "analyze dependencies for PROJ-124 with autoDiscover enabled"
+
+or via direct tool call:
+```json
+{
+  "issueKey": "PROJ-124",
+  "depth": 3,
+  "autoDiscover": true
+}
+```
+
+the ai will:
+1. detect that PROJ-124 is sparse (no components, minimal description)
+2. automatically search for similar tickets with "provider" keyword
+3. automatically search confluence for "provider architecture" docs
+4. include results in `context_discovery` section of output
+5. generate suggested_prompt with discovered context
+
+**when to use autoDiscover:**
+- sparse tickets with no clear repo/service context
+- quick one-call analysis without intermediate steps
+- automation/batch processing scenarios
+
+**when to use manual orchestration:**
+- need to review intermediate results before proceeding
+- want to customize search parameters
+- debugging/exploration workflows
 
 ### example 1: analyze a blocked ticket
 
@@ -481,10 +678,14 @@ GITHUB_DEFAULT_REPO=your-company/repo  # primary repository (format: org/repo)
 ## best practices
 
 1. **start with depth 2-3** - sufficient for most dependency chains, faster results
-2. **use jira_dependency_analysis for comprehensive view** - orchestrates all tools
-3. **combine with code analysis** - follow the suggested_prompt for stage 2
-4. **watch for patterns** - recurring blockers indicate systemic issues
-5. **validate confluence links** - not all embedded links may be accessible
+2. **use autoDiscover=true for sparse tickets** - when ticket has no components, minimal description, or no labels, auto-discovery will search for similar tickets and confluence docs automatically (one-call convenience vs manual orchestration)
+3. **use jira_find_similar_tickets for manual control** - when you want to see intermediate results or customize search parameters
+4. **use jira_dependency_analysis for comprehensive view** - orchestrates all tools with enhanced keyword extraction
+5. **leverage confluence_search_pages** - find architecture docs and runbooks when components are unclear
+6. **combine with code analysis** - follow the suggested_prompt for stage 2 (includes historical ticket search section)
+7. **watch for patterns** - recurring blockers indicate systemic issues
+8. **validate confluence links** - not all embedded links may be accessible
+9. **review extracted keywords** - the tool now extracts technology names, acronyms, and domain terms from titles and descriptions
 
 ---
 

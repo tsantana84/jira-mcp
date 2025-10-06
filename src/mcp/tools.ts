@@ -22,10 +22,16 @@ import {
   ConfluencePageLink,
   ConfluenceJiraLinksInput,
   ConfluenceJiraLinksOutput,
+  ConfluenceSearchPagesInput,
+  ConfluenceSearchPagesOutput,
+  ConfluenceSearchResult,
   DependencyAnalysisInput,
   DependencyAnalysisOutput,
   DependencyBlocker,
   DependencyInsights,
+  FindSimilarTicketsInput,
+  FindSimilarTicketsOutput,
+  SimilarTicket,
   ListProjectsInput,
   ListProjectsOutput,
   ListTransitionsInput,
@@ -399,10 +405,52 @@ export function registerTools(mcp: Mcp, config: Config) {
   );
   registeredNames.push("confluence_page_jira_links");
 
+  // confluence_search_pages
+  mcp.tool(
+    "confluence_search_pages",
+    "Confluence: Search pages using CQL (Confluence Query Language) - find pages by text, title, labels, space",
+    ConfluenceSearchPagesInput.shape,
+    async (input: z.infer<typeof ConfluenceSearchPagesInput>) => {
+      const res = await client.searchConfluencePages(input.cql, input.limit, input.start);
+
+      const results: z.infer<typeof ConfluenceSearchResult>[] = res.results.map((r: any) => {
+        const content = r.content || {};
+        const webui = content._links?.webui;
+        const url = webui ? `${config.confluenceBaseUrl}${webui}` : undefined;
+
+        // simple html stripping for excerpt
+        let excerpt = r.excerpt;
+        if (excerpt && typeof excerpt === "string") {
+          excerpt = excerpt.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+          if (excerpt.length > 300) excerpt = excerpt.slice(0, 300) + "...";
+        }
+
+        return {
+          id: String(content.id || ""),
+          title: content.title || "",
+          type: content.type || "page",
+          excerpt,
+          url,
+          spaceKey: content.space?.key,
+        };
+      });
+
+      const payload: z.infer<typeof ConfluenceSearchPagesOutput> = {
+        results,
+        totalSize: res.totalSize,
+        start: input.start,
+        limit: input.limit,
+      };
+
+      return { content: [{ type: "text", text: JSON.stringify(payload) }] };
+    }
+  );
+  registeredNames.push("confluence_search_pages");
+
   // jira_dependency_analysis (main orchestration tool)
   mcp.tool(
     "jira_dependency_analysis",
-    "Jira: Comprehensive dependency analysis (traverses dependencies, extracts confluence docs, analyzes patterns, generates code search prompt)",
+    "Jira: Comprehensive dependency analysis (traverses dependencies, extracts confluence docs, analyzes patterns, generates code search prompt). Set autoDiscover=true to automatically search for similar tickets and confluence docs when ticket is sparse.",
     DependencyAnalysisInput.shape,
     async (input: z.infer<typeof DependencyAnalysisInput>) => {
       const startTime = new Date();
@@ -626,6 +674,126 @@ export function registerTools(mcp: Mcp, config: Config) {
         insights.patterns.push(`long-term blockers (avg ${insights.avg_blocker_age_days} days blocked)`);
       }
 
+      // 5b. auto-discover context if enabled and ticket is sparse
+      let contextDiscovery: z.infer<typeof DependencyAnalysisOutput>["analysis"]["context_discovery"] = undefined;
+
+      if (input.autoDiscover) {
+        // detect if ticket is sparse (lacks context)
+        const isSparseTicket =
+          ticket.components.length === 0 || // no components
+          !ticket.description || ticket.description.length < 50 || // minimal/missing description
+          ticket.labels.length === 0; // no labels
+
+        if (isSparseTicket) {
+          const similarTicketsResults: z.infer<typeof SimilarTicket>[] = [];
+          const confluenceResults: z.infer<typeof ConfluenceSearchResult>[] = [];
+
+          // extract keywords for discovery (reuse logic from later in this function)
+          const discoveryKeywords = new Set<string>();
+          const extractDiscoveryTerms = (text: string | undefined) => {
+            if (!text) return;
+            const acronyms = text.match(/\b[A-Z]{2,}\b/g);
+            if (acronyms) acronyms.forEach(a => {
+              if (a.length >= 2 && a.length <= 8) discoveryKeywords.add(a);
+            });
+            const domainTerms = text.match(/\b(provider|service|controller|repository|handler|processor|manager|client|server|api|endpoint|queue|stream|pipeline|migration|schema|database|metrics|monitoring)\b/gi);
+            if (domainTerms) domainTerms.forEach(d => discoveryKeywords.add(d.toLowerCase()));
+          };
+          extractDiscoveryTerms(ticket.summary);
+          extractDiscoveryTerms(ticket.description);
+
+          // search for similar tickets (if we have keywords)
+          if (discoveryKeywords.size > 0) {
+            try {
+              const topKeywords = Array.from(discoveryKeywords).slice(0, 3);
+              for (const kw of topKeywords) {
+                const res = await client.searchIssues({
+                  jql: `text ~ "${kw}" AND status = Closed ORDER BY updated DESC`,
+                  startAt: 0,
+                  maxResults: 5,
+                  fields: ["summary", "status", "labels", "components"],
+                });
+
+                const issues = Array.isArray(res.issues) ? res.issues : [];
+                for (const issue of issues) {
+                  const key = issue.key;
+                  if (key === input.issueKey) continue; // skip self
+
+                  // check if already added
+                  if (!similarTicketsResults.find(t => t.key === key)) {
+                    similarTicketsResults.push({
+                      key,
+                      summary: issue.fields?.summary ?? "",
+                      status: issue.fields?.status?.name ?? "",
+                      matchReason: `keyword: ${kw}`,
+                      confidenceScore: 0.7,
+                      labels: issue.fields?.labels || [],
+                      components: (issue.fields?.components || []).map((c: any) => ({
+                        id: String(c.id ?? ""),
+                        name: c.name ?? "",
+                      })),
+                    });
+                  }
+                }
+              }
+            } catch (err) {
+              // if search fails, continue without it
+              console.error("auto-discovery: similar tickets search failed:", err);
+            }
+
+            // search confluence (if we have keywords)
+            try {
+              const topKeywords = Array.from(discoveryKeywords).slice(0, 2);
+              for (const kw of topKeywords) {
+                const cqlQuery = `text ~ "${kw}" AND (title ~ "architecture" OR title ~ "setup" OR title ~ "runbook")`;
+                const res = await client.searchConfluencePages(cqlQuery, 3, 0);
+
+                for (const r of res.results) {
+                  const content = r.content || {};
+                  const webui = content._links?.webui;
+                  const url = webui ? `${config.confluenceBaseUrl}${webui}` : undefined;
+
+                  // simple html stripping for excerpt
+                  let excerpt = r.excerpt;
+                  if (excerpt && typeof excerpt === "string") {
+                    excerpt = excerpt.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+                    if (excerpt.length > 200) excerpt = excerpt.slice(0, 200) + "...";
+                  }
+
+                  confluenceResults.push({
+                    id: String(content.id || ""),
+                    title: content.title || "",
+                    type: content.type || "page",
+                    excerpt,
+                    url,
+                    spaceKey: content.space?.key,
+                  });
+                }
+              }
+            } catch (err) {
+              // if confluence search fails, continue without it
+              console.error("auto-discovery: confluence search failed:", err);
+            }
+          }
+
+          // build discovery summary
+          let discoverySummary = `found ${similarTicketsResults.length} similar tickets`;
+          if (confluenceResults.length > 0) {
+            discoverySummary += ` and ${confluenceResults.length} confluence pages`;
+          }
+          if (similarTicketsResults.length === 0 && confluenceResults.length === 0) {
+            discoverySummary = "no similar context found (ticket may be unique or use different terminology)";
+          }
+
+          contextDiscovery = {
+            is_sparse_ticket: isSparseTicket,
+            similar_tickets: similarTicketsResults.slice(0, 10), // limit to top 10
+            confluence_results: confluenceResults.slice(0, 5), // limit to top 5
+            discovery_summary: discoverySummary,
+          };
+        }
+      }
+
       // 6. generate suggested code search prompt with rich context and github cli integration
       const descriptionSnippet = ticket.description
         ? ticket.description.slice(0, 300) + (ticket.description.length > 300 ? "..." : "")
@@ -645,15 +813,75 @@ export function registerTools(mcp: Mcp, config: Config) {
 
       // extract technical terms from descriptions/comments for targeted search
       const technicalTerms = new Set<string>();
+      const keywords = new Set<string>(); // broader keywords for jql/confluence search
+
       const extractTerms = (text: string | undefined) => {
         if (!text) return;
-        // extract camelcase/pascalcase identifiers (likely class/function names)
-        const matches = text.match(/\b[A-Z][a-z]+(?:[A-Z][a-z]+)+\b/g);
-        if (matches) matches.forEach(t => technicalTerms.add(t));
+
+        // 1. extract camelcase/pascalcase identifiers (likely class/function names)
+        const camelCase = text.match(/\b[A-Z][a-z]+(?:[A-Z][a-z]+)+\b/g);
+        if (camelCase) camelCase.forEach(t => technicalTerms.add(t));
+
+        // 2. extract uppercase acronyms (API, SDK, ETL, gRPC, REST, etc.)
+        const acronyms = text.match(/\b[A-Z]{2,}\b/g);
+        if (acronyms) acronyms.forEach(a => {
+          if (a.length >= 2 && a.length <= 8) { // filter out noise
+            technicalTerms.add(a);
+            keywords.add(a);
+          }
+        });
+
+        // 3. extract common technology names (case-insensitive)
+        const techPatterns = [
+          'redis', 'kafka', 'postgresql', 'postgres', 'mysql', 'mongodb', 'elasticsearch',
+          'docker', 'kubernetes', 'jenkins', 'gradle', 'maven', 'spring', 'hibernate',
+          'react', 'angular', 'vue', 'typescript', 'javascript', 'python', 'java', 'kotlin',
+          'graphql', 'grpc', 'protobuf', 'avro', 'thrift',
+          'prometheus', 'grafana', 'datadog', 'splunk', 'newrelic',
+          'terraform', 'ansible', 'puppet', 'chef',
+          'lambda', 'dynamodb', 's3', 'ec2', 'rds', 'sqs', 'sns', 'kinesis'
+        ];
+        const lowerText = text.toLowerCase();
+        techPatterns.forEach(tech => {
+          if (lowerText.includes(tech)) {
+            technicalTerms.add(tech);
+            keywords.add(tech);
+          }
+        });
+
+        // 4. extract file paths and extensions (src/path/File.java, *.yml, docker-compose.yml)
+        const filePaths = text.match(/\b[\w\-]+\/[\w\-\/]+\.\w+\b/g);
+        if (filePaths) filePaths.forEach(p => technicalTerms.add(p));
+
+        const fileExtensions = text.match(/\*?\.\w{2,5}\b/g);
+        if (fileExtensions) fileExtensions.forEach(e => technicalTerms.add(e));
+
+        // 5. extract domain-specific terms (common patterns in lowercase)
+        const domainTerms = text.match(/\b(provider|service|controller|repository|handler|processor|manager|client|server|api|endpoint|queue|stream|pipeline|migration|schema|database|metrics|monitoring|authentication|authorization|deployment|infrastructure)\b/gi);
+        if (domainTerms) domainTerms.forEach(d => keywords.add(d.toLowerCase()));
+
+        // 6. extract quoted strings (likely important terms/names)
+        const quoted = text.match(/"([^"]+)"|'([^']+)'/g);
+        if (quoted) {
+          quoted.forEach(q => {
+            const cleaned = q.replace(/["']/g, '').trim();
+            if (cleaned.length > 3 && cleaned.length < 50) {
+              keywords.add(cleaned);
+            }
+          });
+        }
       };
+
+      // extract from ticket title/summary (important source of context)
+      extractTerms(ticket.summary);
+
+      // extract from description and comments
       extractTerms(ticket.description);
       ticket.comments.forEach((c: any) => extractTerms(c.body));
-      depGraph.nodes.forEach((n: any) => extractTerms(n.description));
+      depGraph.nodes.forEach((n: any) => {
+        extractTerms(n.summary);
+        extractTerms(n.description);
+      });
 
       // get github context from env (with fallback placeholders)
       const githubOrg = process.env.GITHUB_ORG || "{{YOUR_GITHUB_ORG}}";
@@ -699,6 +927,7 @@ ${confluenceDocs.length > 0 ? `**confluence docs:**\n${confluenceDocs.map((d) =>
 - labels: ${Array.from(allLabels).join(", ") || "none"}
 - components: ${Array.from(allComponents).join(", ") || "none"}
 ${technicalTerms.size > 0 ? `- extracted terms: ${Array.from(technicalTerms).slice(0, 10).join(", ")}` : ""}
+${keywords.size > 0 ? `- keywords for search: ${Array.from(keywords).slice(0, 15).join(", ")}` : ""}
 
 ---
 
@@ -715,6 +944,54 @@ ${technicalTerms.size > 0 ? `- extracted terms: ${Array.from(technicalTerms).sli
 ---
 
 ## analysis tasks
+
+### 0. discover context from historical tickets (if repo/service unclear)
+
+**note:** if you're unsure which repos this ticket affects, start here to find clues from similar past work.
+
+**search for similar tickets (use jira_list_issues mcp tool or jira cli):**
+\`\`\`bash
+# find closed tickets with similar keywords (discovers repos via linked prs)
+${Array.from(keywords).slice(0, 5).map(kw =>
+  `# tickets mentioning "${kw}"\njira_list_issues jql="text ~ '${kw}' AND status = Closed ORDER BY updated DESC" limit=10`
+).join("\n")}
+
+# search by components to find historical work
+${Array.from(allComponents).slice(0, 3).map(comp =>
+  `jira_list_issues jql="component = '${comp}' AND status = Closed ORDER BY updated DESC" limit=15`
+).join("\n")}
+
+# find tickets from same assignee (if assigned) to discover repo patterns
+${ticket.assignee ? `jira_list_issues jql="assignee = '${ticket.assignee.displayName}' AND status = Closed ORDER BY updated DESC" limit=20` : "# (skip - no assignee)"}
+
+# alternative: use jira cli if mcp not available
+# jira issue list --jql "text ~ 'keyword' AND status = Closed" --limit 10
+\`\`\`
+
+**search confluence for architecture/context (use confluence_search_pages mcp tool if available):**
+\`\`\`bash
+# search for architecture docs with keywords
+${Array.from(keywords).slice(0, 3).map(kw =>
+  `confluence_search_pages cql="text ~ '${kw}' AND (title ~ 'architecture' OR title ~ 'setup' OR title ~ 'runbook')" limit=5`
+).join("\n")}
+
+# search for component documentation
+${Array.from(allComponents).slice(0, 2).map(comp =>
+  `confluence_search_pages cql="text ~ '${comp}'" limit=5`
+).join("\n")}
+
+# note: confluence_search_pages requires confluence-minimal-server or reports-minimal-server
+# if not available, manually search confluence web ui for these keywords
+\`\`\`
+
+**strategy:**
+1. review closed tickets from searches above
+2. identify github prs linked to those tickets (pr descriptions often mention repo)
+3. extract repo patterns and file paths from those prs
+4. use discovered repos as starting point for sections 1-5 below
+5. if still unclear, search github org for keywords: \`gh search repos --owner ${githubOrg} "${Array.from(keywords).slice(0, 1).join("")}"\`
+
+---
 
 ### 1. search github for related prs and commits
 
@@ -899,12 +1176,14 @@ create a file called \`code_analysis.json\` with this structure:
           blockers,
           confluence_docs: confluenceDocs,
           insights,
+          ...(contextDiscovery ? { context_discovery: contextDiscovery } : {}),
         },
         suggested_prompt: suggestedPrompt,
         metadata: {
           analyzed_at: startTime.toISOString(),
           depth_traversed: input.depth,
           tool_version: "1.0",
+          auto_discover_enabled: input.autoDiscover,
         },
       };
 
@@ -912,6 +1191,167 @@ create a file called \`code_analysis.json\` with this structure:
     }
   );
   registeredNames.push("jira_dependency_analysis");
+
+  // jira_find_similar_tickets (discover context from historical tickets)
+  mcp.tool(
+    "jira_find_similar_tickets",
+    "Jira: Find similar tickets to discover repos/services context (searches by keywords, components, labels, assignee)",
+    FindSimilarTicketsInput.shape,
+    async (input: z.infer<typeof FindSimilarTicketsInput>) => {
+      // 1. fetch source ticket
+      const raw = await client.getIssue(input.issueKey, ["summary", "description", "comment", "labels", "components", "assignee"]);
+
+      // extract keywords from source ticket using same logic as dependency_analysis
+      const keywords = new Set<string>();
+      const technicalTerms = new Set<string>();
+
+      const extractTerms = (text: string | undefined) => {
+        if (!text) return;
+        const camelCase = text.match(/\b[A-Z][a-z]+(?:[A-Z][a-z]+)+\b/g);
+        if (camelCase) camelCase.forEach(t => technicalTerms.add(t));
+
+        const acronyms = text.match(/\b[A-Z]{2,}\b/g);
+        if (acronyms) acronyms.forEach(a => {
+          if (a.length >= 2 && a.length <= 8) {
+            technicalTerms.add(a);
+            keywords.add(a);
+          }
+        });
+
+        const domainTerms = text.match(/\b(provider|service|controller|repository|handler|processor|manager|client|server|api|endpoint|queue|stream|pipeline|migration|schema|database|metrics|monitoring|authentication|authorization|deployment|infrastructure)\b/gi);
+        if (domainTerms) domainTerms.forEach(d => keywords.add(d.toLowerCase()));
+      };
+
+      const summary = raw?.fields?.summary ?? "";
+      const description = adfToPlainText(raw?.fields?.description) || "";
+      const labels = raw?.fields?.labels || [];
+      const components = (raw?.fields?.components || []).map((c: any) => c.name ?? "");
+      const assignee = raw?.fields?.assignee?.displayName;
+
+      extractTerms(summary);
+      extractTerms(description);
+      (raw?.fields?.comment?.comments || []).slice(-3).forEach((c: any) => {
+        extractTerms(adfToPlainText(c.body));
+      });
+
+      // 2. build search queries based on enabled strategies
+      const searches: Array<{ jql: string; strategy: string; weight: number }> = [];
+
+      // keyword-based search (highest weight if keywords found)
+      if (input.includeKeywords && keywords.size > 0) {
+        const topKeywords = Array.from(keywords).slice(0, 5);
+        topKeywords.forEach(kw => {
+          const statusFilter = input.onlyClosedTickets ? " AND status = Closed" : "";
+          searches.push({
+            jql: `text ~ "${kw}"${statusFilter} ORDER BY updated DESC`,
+            strategy: `keyword: ${kw}`,
+            weight: 0.7,
+          });
+        });
+      }
+
+      // component-based search (very high confidence)
+      if (input.includeComponents && components.length > 0) {
+        components.forEach((comp: string) => {
+          const statusFilter = input.onlyClosedTickets ? " AND status = Closed" : "";
+          searches.push({
+            jql: `component = "${comp}"${statusFilter} ORDER BY updated DESC`,
+            strategy: `component: ${comp}`,
+            weight: 0.9,
+          });
+        });
+      }
+
+      // label-based search (medium confidence)
+      if (input.includeLabels && labels.length > 0) {
+        labels.forEach((label: string) => {
+          const statusFilter = input.onlyClosedTickets ? " AND status = Closed" : "";
+          searches.push({
+            jql: `labels = "${label}"${statusFilter} ORDER BY updated DESC`,
+            strategy: `label: ${label}`,
+            weight: 0.6,
+          });
+        });
+      }
+
+      // assignee-based search (low confidence, but useful for repo discovery)
+      if (input.includeAssignee && assignee) {
+        const statusFilter = input.onlyClosedTickets ? " AND status = Closed" : "";
+        searches.push({
+          jql: `assignee = "${assignee}"${statusFilter} ORDER BY updated DESC`,
+          strategy: `assignee: ${assignee}`,
+          weight: 0.4,
+        });
+      }
+
+      // 3. execute searches and collect results
+      const similarTicketsMap = new Map<string, z.infer<typeof SimilarTicket>>();
+      const strategiesUsed: string[] = [];
+
+      for (const search of searches) {
+        try {
+          const res = await client.searchIssues({
+            jql: search.jql,
+            startAt: 0,
+            maxResults: Math.min(input.limit * 2, 20), // fetch more to ensure we have enough after dedup
+            fields: ["summary", "status", "labels", "components"],
+          });
+
+          strategiesUsed.push(search.strategy);
+
+          const issues = Array.isArray(res.issues) ? res.issues : [];
+          for (const issue of issues) {
+            const key = issue.key;
+            if (key === input.issueKey) continue; // skip source ticket itself
+
+            // if already found via another search, boost confidence
+            if (similarTicketsMap.has(key)) {
+              const existing = similarTicketsMap.get(key)!;
+              existing.confidenceScore = Math.min(1.0, existing.confidenceScore + search.weight * 0.3);
+              existing.matchReason += `, ${search.strategy}`;
+            } else {
+              similarTicketsMap.set(key, {
+                key,
+                summary: issue.fields?.summary ?? "",
+                status: issue.fields?.status?.name ?? "",
+                matchReason: search.strategy,
+                confidenceScore: search.weight,
+                labels: issue.fields?.labels || [],
+                components: (issue.fields?.components || []).map((c: any) => ({
+                  id: String(c.id ?? ""),
+                  name: c.name ?? "",
+                })),
+              });
+            }
+          }
+        } catch (err) {
+          // if search fails, skip it
+          console.error(`search failed for jql: ${search.jql}`, err);
+        }
+      }
+
+      // 4. sort by confidence and limit results
+      const sortedTickets = Array.from(similarTicketsMap.values())
+        .sort((a, b) => b.confidenceScore - a.confidenceScore)
+        .slice(0, input.limit);
+
+      const payload: z.infer<typeof FindSimilarTicketsOutput> = {
+        sourceTicket: {
+          key: input.issueKey,
+          summary,
+          extractedKeywords: Array.from(keywords),
+          components,
+          labels,
+        },
+        similarTickets: sortedTickets,
+        searchStrategies: strategiesUsed,
+        totalFound: similarTicketsMap.size,
+      };
+
+      return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
+    }
+  );
+  registeredNames.push("jira_find_similar_tickets");
 
   // Return early: write operations are intentionally disabled (out of scope for dependency analysis)
   (mcp as any)._registeredToolNames = registeredNames.slice();
