@@ -173,28 +173,36 @@ Edit your Gemini CLI settings file (`~/.gemini/settings.json`):
 
 ## Common Use Cases
 
+## Example Queries
+
+once configured, you can ask gemini cli natural language questions and it will automatically use the appropriate jira mcp tools:
+
 ### Daily Standup Preparation
-```bash
-gemini "show me what I worked on yesterday and what's assigned to me today"
-```
+- "show me what I worked on yesterday and what's assigned to me today"
 
 ### Project Health Checks
-```bash
-gemini "give me a daily brief for project ABC for the last 24 hours"
-gemini "show me any blocked or high-priority issues"
-```
+- "give me a daily brief for project ABC for the last 24 hours"
+- "show me any blocked or high-priority issues"
 
 ### Documentation Discovery
-```bash
-gemini "find recent architecture decisions in the ENG space"
-gemini "search for documentation about our deployment process"
-```
+- "find recent architecture decisions in the ENG space"
+- "search for documentation about our deployment process"
+
+### Dependency Analysis (NEW)
+- "analyze dependencies for PROJ-123" → uses `jira_dependency_analysis`
+- "why is DMD-456 blocked and for how long?" → analyzes blockers with age
+- "what confluence pages are linked to PROJ-789?" → uses `jira_issue_confluence_links`
+- "show me the full dependency chain for INFRA-100" → uses `jira_issue_relationships`
+- "when did PROJ-123 transition to blocked status?" → uses `jira_get_changelog`
 
 ### Cross-tool Analysis
-```bash
-# If you have multiple MCP servers
-gemini "compare my Jira workload with my GitHub activity"
-```
+if you have multiple MCP servers configured:
+- "compare my Jira workload with my GitHub activity"
+
+### Two-stage Dependency Workflow
+1. ask gemini: "analyze PROJ-123 dependencies and save to jira_analysis.json"
+2. gemini writes the file with analysis data and suggested code search prompt
+3. use the suggested_prompt with gemini cli in your repository for stage 2
 
 ## Troubleshooting
 

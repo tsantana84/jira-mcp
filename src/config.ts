@@ -2,6 +2,7 @@ import { EnvConfig } from "./schemas.js";
 
 export type Config = {
   baseUrl: string;
+  confluenceBaseUrl: string;
   email: string;
   apiToken: string;
   defaults: {
@@ -19,8 +20,13 @@ export function loadConfig(): Config {
     throw new Error(`Invalid environment. Missing or invalid: ${issues}`);
   }
   const env = parsed.data;
+
+  // derive confluence URL from jira URL if not explicitly set
+  const confluenceBaseUrl = env.CONFLUENCE_BASE_URL || `${env.JIRA_BASE_URL}/wiki`;
+
   return {
     baseUrl: env.JIRA_BASE_URL,
+    confluenceBaseUrl,
     email: env.JIRA_EMAIL,
     apiToken: env.JIRA_API_TOKEN,
     defaults: {

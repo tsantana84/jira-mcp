@@ -18,10 +18,12 @@ const MIN_FIELDS = [
 
 export class JiraClient {
   private readonly baseUrl: string;
+  private readonly confluenceBaseUrl: string;
   private readonly authHeader: string;
 
   constructor(cfg: Config) {
     this.baseUrl = cfg.baseUrl.replace(/\/$/, "");
+    this.confluenceBaseUrl = cfg.confluenceBaseUrl.replace(/\/$/, "");
     const basic = Buffer.from(`${cfg.email}:${cfg.apiToken}`).toString("base64");
     this.authHeader = `Basic ${basic}`;
   }
@@ -267,6 +269,44 @@ export class JiraClient {
       undefined,
       qp
     );
+    return data;
+  }
+
+  // ----- Confluence -----
+  async getConfluencePage(
+    pageId: string,
+    expand?: string[]
+  ): Promise<{
+    id: string;
+    type: string;
+    title: string;
+    body?: { storage?: { value: string; representation: string } };
+    ancestors?: Array<{ id: string; title: string; type: string }>;
+    _links?: { webui?: string };
+  }> {
+    // build confluence API URL
+    const url = new URL(`${this.confluenceBaseUrl}/rest/api/content/${encodeURIComponent(pageId)}`);
+    const expandParams = expand && expand.length > 0 ? expand.join(",") : "body.storage,ancestors";
+    url.searchParams.set("expand", expandParams);
+
+    const headers: Record<string, string> = {
+      Authorization: this.authHeader,
+      Accept: "application/json",
+    };
+
+    const res = await fetch(url, { method: "GET", headers });
+
+    if (res.status === 404) {
+      throw new Error(`Confluence page not found: ${pageId}`);
+    }
+
+    if (!res.ok) {
+      let detail: any = undefined;
+      try { detail = await res.json(); } catch {}
+      throw new Error(`Confluence API ${res.status} ${res.statusText}: ${JSON.stringify(detail || {})}`);
+    }
+
+    const data: any = await res.json();
     return data;
   }
 }
