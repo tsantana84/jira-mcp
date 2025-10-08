@@ -14,6 +14,7 @@ function setup() {
   const server = new FakeServer();
   const config: Config = {
     baseUrl: "https://example.atlassian.net",
+    confluenceBaseUrl: "https://example.atlassian.net/wiki",
     email: "user@example.com",
     apiToken: "x",
     defaults: {},
@@ -23,7 +24,10 @@ function setup() {
 }
 
 describe("Tool preview behavior", () => {
-  it("create_issue returns preview when confirm=false", async () => {
+  // note: write operations (create_issue, update_issue, add_comment, transition_issue) are intentionally
+  // disabled in the main server (out of scope for dependency analysis). these tests are skipped.
+
+  it.skip("create_issue returns preview when confirm=false", async () => {
     const server = setup();
     const tool = server.tools.get("create_issue")!;
     const res = await tool.handler({ input: { summary: "Hello", confirm: false } });
@@ -31,7 +35,7 @@ describe("Tool preview behavior", () => {
     expect(res.request).toMatchObject({ method: "POST", path: "/rest/api/3/issue" });
   });
 
-  it("update_issue returns preview when confirm=false", async () => {
+  it.skip("update_issue returns preview when confirm=false", async () => {
     const server = setup();
     const tool = server.tools.get("update_issue")!;
     const res = await tool.handler({ input: { issueKey: "ABC-1", summary: "X", confirm: false } });
@@ -39,7 +43,7 @@ describe("Tool preview behavior", () => {
     expect(res.request).toMatchObject({ method: "PUT", path: "/rest/api/3/issue/ABC-1" });
   });
 
-  it("add_comment returns preview when confirm=false", async () => {
+  it.skip("add_comment returns preview when confirm=false", async () => {
     const server = setup();
     const tool = server.tools.get("add_comment")!;
     const res = await tool.handler({ input: { issueKey: "ABC-1", body: "Note", confirm: false } });
@@ -47,7 +51,7 @@ describe("Tool preview behavior", () => {
     expect(res.request).toMatchObject({ method: "POST", path: "/rest/api/3/issue/ABC-1/comment" });
   });
 
-  it("transition_issue returns preview when confirm=false without network lookups", async () => {
+  it.skip("transition_issue returns preview when confirm=false without network lookups", async () => {
     const server = setup();
     const tool = server.tools.get("transition_issue")!;
     const res = await tool.handler({ input: { issueKey: "ABC-1", transition: "Done", confirm: false } });

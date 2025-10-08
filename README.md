@@ -70,7 +70,7 @@ Quickstart
    }
 
 5) Verify tools
-   - jira-min: jira_list_issues, jira_list_projects, jira_list_boards, jira_board_issues
+   - jira-min: jira_list_issues, jira_list_projects, jira_list_boards, jira_board_issues, jira_get_issue, jira_issue_relationships, jira_get_changelog, jira_dependency_analysis, confluence_get_page, jira_issue_confluence_links, confluence_page_jira_links
    - confluence-min: confluence_search_pages
    - reports-min: ops_daily_brief, ops_shift_delta, ops_jira_review_radar
    - Or run: npm run ping (requires Jira env vars) to sanity-check the Jira server.
@@ -118,6 +118,27 @@ Common calls (examples)
 - Jira: list issues with comments hydration
   { "jql": "project=ABC AND status != Done ORDER BY updated DESC", "fields": "summary,assignee,comment", "includeComments": true }
 
+- Jira: get single issue with full details
+  { "issueKey": "PROJ-123", "fields": "all" }
+
+- Jira: analyze dependencies for a blocked ticket
+  { "issueKey": "PROJ-123", "depth": 3 }
+
+- Jira: traverse issue relationship graph
+  { "issueKey": "PROJ-123", "depth": 3 }
+
+- Jira: get issue changelog (status transitions, reassignments)
+  { "issueKey": "PROJ-123", "maxResults": 100 }
+
+- Confluence: get page with ancestors/breadcrumbs
+  { "pageId": "123456", "expand": ["body.storage", "ancestors"] }
+
+- Jira: extract confluence links from issue
+  { "issueKey": "PROJ-123" }
+
+- Confluence: extract jira keys from page
+  { "pageId": "123456", "validate": true }
+
 - Jira: list boards for a project
   { "projectKeyOrId": "ABC", "limit": 25 }
 
@@ -129,6 +150,30 @@ Common calls (examples)
 
 - Reports: daily brief for last 24h (São Paulo)
   { "from": "2025-09-24T12:00:00-03:00", "to": "2025-09-25T12:00:00-03:00", "projects": ["ABC","DMD"], "labelsBlocked": ["Blocked","Impeded"] }
+
+Dependency Analysis Workflow (3-Stage Process)
+For comprehensive dependency analysis across jira, code, and implementation planning:
+
+**Stage 1: Jira/Confluence Discovery** (via jira_dependency_analysis tool)
+- analyzes ticket dependencies (blocks, blocked by, relates to)
+- extracts confluence documentation links
+- identifies blocker patterns and bottlenecks
+- outputs: jira_analysis.json with suggested code search prompt
+
+**Stage 2: Code Analysis** (via github cli in your repository)
+- uses suggested_prompt from stage 1 with claude/gemini in your repo
+- searches github for related prs, commits, and cross-repo dependencies
+- extracts implementation patterns from closed related tickets
+- outputs: code_analysis.json with structured findings
+
+**Stage 3: Synthesis** (correlates both analyses)
+- uses SYNTHESIS_PROMPT.md template to analyze both json files
+- generates tech lead context (for ticket descriptions)
+- generates developer implementation guide (step-by-step plan)
+- outputs: synthesis_analysis.json
+
+See [DEPENDENCY_ANALYSIS.md](./DEPENDENCY_ANALYSIS.md) for detailed workflow and examples.
+See [SYNTHESIS_PROMPT.md](./SYNTHESIS_PROMPT.md) for stage 3 template.
 
 Where things live
 - Minimal servers: scripts/minimal-server.mjs, scripts/confluence-minimal-server.mjs, scripts/report-minimal-server.mjs

@@ -18,10 +18,12 @@ const MIN_FIELDS = [
 
 export class JiraClient {
   private readonly baseUrl: string;
+  private readonly confluenceBaseUrl: string;
   private readonly authHeader: string;
 
   constructor(cfg: Config) {
     this.baseUrl = cfg.baseUrl.replace(/\/$/, "");
+    this.confluenceBaseUrl = cfg.confluenceBaseUrl.replace(/\/$/, "");
     const basic = Buffer.from(`${cfg.email}:${cfg.apiToken}`).toString("base64");
     this.authHeader = `Basic ${basic}`;
   }
@@ -268,5 +270,86 @@ export class JiraClient {
       qp
     );
     return data;
+  }
+
+  // ----- Confluence -----
+  async getConfluencePage(
+    pageId: string,
+    expand?: string[]
+  ): Promise<{
+    id: string;
+    type: string;
+    title: string;
+    body?: { storage?: { value: string; representation: string } };
+    ancestors?: Array<{ id: string; title: string; type: string }>;
+    _links?: { webui?: string };
+  }> {
+    // build confluence API URL
+    const url = new URL(`${this.confluenceBaseUrl}/rest/api/content/${encodeURIComponent(pageId)}`);
+    const expandParams = expand && expand.length > 0 ? expand.join(",") : "body.storage,ancestors";
+    url.searchParams.set("expand", expandParams);
+
+    const headers: Record<string, string> = {
+      Authorization: this.authHeader,
+      Accept: "application/json",
+    };
+
+    const res = await fetch(url, { method: "GET", headers });
+
+    if (res.status === 404) {
+      throw new Error(`Confluence page not found: ${pageId}`);
+    }
+
+    if (!res.ok) {
+      let detail: any = undefined;
+      try { detail = await res.json(); } catch {}
+      throw new Error(`Confluence API ${res.status} ${res.statusText}: ${JSON.stringify(detail || {})}`);
+    }
+
+    const data: any = await res.json();
+    return data;
+  }
+
+  async searchConfluencePages(
+    cql: string,
+    limit?: number,
+    start?: number
+  ): Promise<{
+    results: Array<{
+      content: {
+        id: string;
+        type: string;
+        title: string;
+        space?: { key: string };
+        _links?: { webui?: string };
+      };
+      excerpt?: string;
+    }>;
+    totalSize: number;
+  }> {
+    // build confluence search API URL
+    const url = new URL(`${this.confluenceBaseUrl}/rest/api/search`);
+    url.searchParams.set("cql", cql);
+    if (limit) url.searchParams.set("limit", String(limit));
+    if (start) url.searchParams.set("start", String(start));
+
+    const headers: Record<string, string> = {
+      Authorization: this.authHeader,
+      Accept: "application/json",
+    };
+
+    const res = await fetch(url, { method: "GET", headers });
+
+    if (!res.ok) {
+      let detail: any = undefined;
+      try { detail = await res.json(); } catch {}
+      throw new Error(`Confluence search API ${res.status} ${res.statusText}: ${JSON.stringify(detail || {})}`);
+    }
+
+    const data: any = await res.json();
+    return {
+      results: data.results || [],
+      totalSize: data.totalSize || 0,
+    };
   }
 }

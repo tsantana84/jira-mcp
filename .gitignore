@@ -2,4 +2,6 @@ node_modules
 dist
 .DS_Store
 .env
-
+code_analysis.json
+jira_analysis.json
+synthesis_analysis.json
