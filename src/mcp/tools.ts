@@ -892,17 +892,123 @@ export function registerTools(mcp: Mcp, config: Config) {
 
       const suggestedPrompt = `# code analysis for jira ticket: ${ticket.key}
 
-## ticket context
+## context from phase 1
+
+you have been provided with jira dependency analysis containing:
+- main ticket: ${ticket.key} - "${ticket.summary}"
+- ${depGraph.nodes.length - 1} related tickets from dependency graph
+${confluenceDocs.length > 0 ? `- ${confluenceDocs.length} confluence documentation references` : ""}
+- extracted technical terms and keywords from ticket content
+
+## your task: github analysis & synthesis
+
+using the phase 1 context, search github to build a complete picture of:
+1. implementation patterns from related prs/commits
+2. current code state for mentioned components
+3. cross-repository dependencies
+4. database/schema impacts
+
+## analysis principles
+
+### confidence tiers
+**high (0.8-1.0)**: direct evidence from main ticket or merged prs explicitly linked to ticket
+**medium (0.5-0.8)**: evidence from related tickets or recent commits mentioning technical terms
+**low (0.0-0.5)**: inferred from confluence docs or code patterns without direct ticket link
+
+### source interpretation rules
+**github code** = authoritative for:
+- current implementation patterns ("how is x done today?")
+- existing architecture ("what does the code actually do?")
+
+**github code** = low confidence for:
+- future planning ("what should we build?")
+- strategic direction (defer to jira/confluence unless recent pr/rfc found)
+
+**confluence** = context only:
+- treat as background knowledge
+- flag if contradicts recent tickets/code
+- downgrade if >12 months old
+
+### gap handling
+- if searches return no relevant results (<12 months), note it explicitly
+- if sources conflict, flag the contradiction with recency + tier ranking
+- never infer connections without evidence
+- it's acceptable to have a sparse output with clear gaps
+
+### contradiction protocol
+when jira, confluence, and github disagree:
+1. note the specific contradiction
+2. rank by: recency of source + tier level
+3. provide recommendation with caveat
+4. flag for human review
+
+example:
+\`\`\`
+"conflict: ticket ${ticket.key} (2 weeks old, high) says use rest api.
+confluence 'api guidelines' (8 months old, low) says graphql.
+current code shows rest implementation (confirmed in src/api/).
+recommendation: follow rest approach (ticket + code align).
+action: flag outdated confluence doc for update."
+\`\`\`
+
+## search strategy
+
+use the technical terms and ticket ids from phase 1 to:
+
+### 1. find direct references
+\`\`\`bash
+# prs mentioning ticket ids (last 12 months)
+${allIssueKeys.slice(0, 3).map(key => `gh pr list --repo ${githubRepo} --search "${key}" --state all --limit 10`).join("\n")}
+
+# commits mentioning tickets
+${allIssueKeys.slice(0, 2).map(key => `git log --all --grep="${key}" --oneline --since="12 months ago" -20`).join("\n")}
+\`\`\`
+
+### 2. find pattern examples from closed dependencies
+${depGraph.nodes.filter(n => n.status.toLowerCase() === "closed").length > 0 ? `- review prs for closed dependencies to find implementation patterns
+- assign high confidence if pattern is recent and applicable
+
+\`\`\`bash
+${depGraph.nodes.filter(n => n.status.toLowerCase() === "closed").slice(0, 2).map(n =>
+  `gh pr list --repo ${githubRepo} --search "${n.key}" --state closed --limit 5\n# then: gh pr diff <PR_NUMBER> for implementation details`
+).join("\n")}
+\`\`\`` : "- no closed dependencies found to reference"}
+
+### 3. search code for technical terms
+${technicalTerms.size > 0 ? `\`\`\`bash
+# use terms extracted from jira analysis
+${Array.from(technicalTerms).slice(0, 5).map(term =>
+  `grep -r "${term}" --include="*.java" --include="*.kt" --include="*.ts" --include="*.py" --include="*.go" -n`
+).join("\n")}
+\`\`\`` : "- no technical terms extracted; search based on components/labels"}
+
+### 4. identify cross-service impact (only if relevant to ticket type)
+- api endpoint changes → search for consumers
+- schema changes → search for migration files
+- shared library changes → search for dependents
+
+\`\`\`bash
+# example searches (adjust based on ticket type)
+${allComponents.size > 0 ? `gh search repos --owner ${githubOrg} "${Array.from(allComponents).values().next().value}-client OR ${Array.from(allComponents).values().next().value}-consumer" --limit 10` : `gh search repos --owner ${githubOrg} "client OR consumer" --limit 10`}
+\`\`\`
+
+### 5. stop early if no results
+- if first 2-3 searches return nothing recent, note the gap
+- don't exhaust all possible searches if evidence suggests isolated ticket
+
+---
+
+## ticket context summary
 
 **main ticket:** ${ticket.key} - "${ticket.summary}"
 **status:** ${ticket.status} | **type:** ${ticket.issueType}
-${ticket.assignee ? `**assignee:** ${ticket.assignee.displayName}` : ""}${ticket.priority ? ` | **priority:** ${ticket.priority.name}` : ""}
+${ticket.assignee ? `**assignee:** ${ticket.assignee.displayName}` : "**assignee:** unassigned"}${ticket.priority ? ` | **priority:** ${ticket.priority.name}` : ""}
 
 **description:**
 ${descriptionSnippet || "(no description provided)"}
 
-${ticket.labels.length > 0 ? `**labels:** ${ticket.labels.join(", ")}` : ""}
-${ticket.components.length > 0 ? `**components:** ${ticket.components.map((c: any) => c.name).join(", ")}` : ""}
+**labels:** ${ticket.labels.length > 0 ? ticket.labels.join(", ") : "none"}
+**components:** ${ticket.components.length > 0 ? ticket.components.map((c: any) => c.name).join(", ") : "none"}
 
 ${keyComments.length > 0 ? `**key comments:**\n${keyComments.join("\n")}` : ""}
 
@@ -912,261 +1018,150 @@ ${depGraph.nodes.slice(0, 5).map((n: any) => {
   if (n.labels && n.labels.length > 0) parts.push(`  labels: ${n.labels.join(", ")}`);
   if (n.components && n.components.length > 0) parts.push(`  components: ${n.components.map((c: any) => c.name).join(", ")}`);
   if (n.description) {
-    const snippet = n.description.slice(0, 150) + (n.description.length > 150 ? "..." : "");
+    const snippet = n.description.slice(0, 100) + (n.description.length > 100 ? "..." : "");
     parts.push(`  desc: ${snippet}`);
   }
   return parts.join("\n");
 }).join("\n")}
-${depGraph.nodes.length > 5 ? `... and ${depGraph.nodes.length - 5} more` : ""}
+${depGraph.nodes.length > 5 ? `\n... and ${depGraph.nodes.length - 5} more (see full dependency graph in jira analysis)` : ""}
 
-${blockers.length > 0 ? `**blockers:**\n${blockers.map((b) => `- ${b.key}: "${b.summary}" (${b.status}${b.days_blocked ? `, blocked ${b.days_blocked} days` : ""})`).join("\n")}` : ""}
+${blockers.length > 0 ? `\n**blockers:**\n${blockers.map((b) => `- ${b.key}: "${b.summary}" (${b.status}${b.days_blocked ? `, blocked ${b.days_blocked} days` : ""})`).join("\n")}` : ""}
 
-${confluenceDocs.length > 0 ? `**confluence docs:**\n${confluenceDocs.map((d) => `- ${d.title} (id: ${d.id})`).join("\n")}` : ""}
+${confluenceDocs.length > 0 ? `\n**confluence docs:**\n${confluenceDocs.map((d) => `- ${d.title} (id: ${d.id}${d.url ? `, url: ${d.url}` : ""})`).join("\n")}` : ""}
 
 **technical context:**
-- labels: ${Array.from(allLabels).join(", ") || "none"}
-- components: ${Array.from(allComponents).join(", ") || "none"}
-${technicalTerms.size > 0 ? `- extracted terms: ${Array.from(technicalTerms).slice(0, 10).join(", ")}` : ""}
-${keywords.size > 0 ? `- keywords for search: ${Array.from(keywords).slice(0, 15).join(", ")}` : ""}
+- all labels: ${Array.from(allLabels).join(", ") || "none"}
+- all components: ${Array.from(allComponents).join(", ") || "none"}
+${technicalTerms.size > 0 ? `- extracted terms: ${Array.from(technicalTerms).slice(0, 10).join(", ")}${technicalTerms.size > 10 ? ` (${technicalTerms.size - 10} more)` : ""}` : ""}
+${keywords.size > 0 ? `- keywords for search: ${Array.from(keywords).slice(0, 15).join(", ")}${keywords.size > 15 ? ` (${keywords.size - 15} more)` : ""}` : ""}
+
+**repository context:**
+- primary repository: ${githubRepo}
+- organization: ${githubOrg}
 
 ---
 
-## repository context
-
-**primary repository:** ${githubRepo}
-**organization:** ${githubOrg}
-
-**related repositories to check:**
-- database migrations: ${githubOrg}/db-migrations or ${githubOrg}/*-schema
-- data ingestion/etl: ${githubOrg}/data-pipeline or ${githubOrg}/*-etl
-- api consumers: search org for services using this component
-
----
-
-## analysis tasks
-
-### 0. discover context from historical tickets (if repo/service unclear)
-
-**note:** if you're unsure which repos this ticket affects, start here to find clues from similar past work.
-
-**search for similar tickets (use jira_list_issues mcp tool or jira cli):**
-\`\`\`bash
-# find closed tickets with similar keywords (discovers repos via linked prs)
-${Array.from(keywords).slice(0, 5).map(kw =>
-  `# tickets mentioning "${kw}"\njira_list_issues jql="text ~ '${kw}' AND status = Closed ORDER BY updated DESC" limit=10`
-).join("\n")}
-
-# search by components to find historical work
-${Array.from(allComponents).slice(0, 3).map(comp =>
-  `jira_list_issues jql="component = '${comp}' AND status = Closed ORDER BY updated DESC" limit=15`
-).join("\n")}
-
-# find tickets from same assignee (if assigned) to discover repo patterns
-${ticket.assignee ? `jira_list_issues jql="assignee = '${ticket.assignee.displayName}' AND status = Closed ORDER BY updated DESC" limit=20` : "# (skip - no assignee)"}
-
-# alternative: use jira cli if mcp not available
-# jira issue list --jql "text ~ 'keyword' AND status = Closed" --limit 10
-\`\`\`
-
-**search confluence for architecture/context (use confluence_search_pages mcp tool if available):**
-\`\`\`bash
-# search for architecture docs with keywords
-${Array.from(keywords).slice(0, 3).map(kw =>
-  `confluence_search_pages cql="text ~ '${kw}' AND (title ~ 'architecture' OR title ~ 'setup' OR title ~ 'runbook')" limit=5`
-).join("\n")}
-
-# search for component documentation
-${Array.from(allComponents).slice(0, 2).map(comp =>
-  `confluence_search_pages cql="text ~ '${comp}'" limit=5`
-).join("\n")}
-
-# note: confluence_search_pages requires confluence-minimal-server or reports-minimal-server
-# if not available, manually search confluence web ui for these keywords
-\`\`\`
-
-**strategy:**
-1. review closed tickets from searches above
-2. identify github prs linked to those tickets (pr descriptions often mention repo)
-3. extract repo patterns and file paths from those prs
-4. use discovered repos as starting point for sections 1-5 below
-5. if still unclear, search github org for keywords: \`gh search repos --owner ${githubOrg} "${Array.from(keywords).slice(0, 1).join("")}"\`
-
----
-
-### 1. search github for related prs and commits
-
-**find prs mentioning jira tickets:**
-\`\`\`bash
-# search for prs containing issue keys
-${allIssueKeys.slice(0, 3).map(key => `gh pr list --repo ${githubRepo} --search "${key}" --state all --limit 10`).join("\n")}
-
-# for closed dependencies, review implementation patterns
-${depGraph.nodes.filter(n => n.status.toLowerCase() === "closed").slice(0, 2).map(n =>
-  `gh pr list --repo ${githubRepo} --search "${n.key}" --state closed --limit 5\n# then: gh pr diff <PR_NUMBER> to see how ${n.key} was implemented`
-).join("\n")}
-\`\`\`
-
-**search git history:**
-\`\`\`bash
-# find commits mentioning issue keys
-${allIssueKeys.slice(0, 2).map(key => `git log --all --grep="${key}" --oneline -20`).join("\n")}
-
-# search for technical terms from descriptions
-${Array.from(technicalTerms).slice(0, 3).map(term => `git log --all --grep="${term}" --oneline -10`).join("\n")}
-
-# search commits by component/label keywords
-${Array.from(allLabels).slice(0, 2).map(label => `git log --all --grep="${label}" --since="6 months ago" -20`).join("\n")}
-\`\`\`
-
-### 2. search codebase for technical terms
-
-**search for class/function names from descriptions:**
-\`\`\`bash
-${Array.from(technicalTerms).slice(0, 5).map(term =>
-  `grep -r "${term}" --include="*.java" --include="*.kt" --include="*.ts" --include="*.py" -n`
-).join("\n")}
-\`\`\`
-
-**search for component-related code:**
-\`\`\`bash
-${Array.from(allComponents).slice(0, 3).map(comp =>
-  `grep -r "${comp}" --include="*.java" --include="*.xml" --include="*.yaml" -i`
-).join("\n")}
-\`\`\`
-
-**search for label-related patterns:**
-\`\`\`bash
-${Array.from(allLabels).slice(0, 3).map(label =>
-  `grep -r "${label}" --include="*.java" --include="*.kt" -i`
-).join("\n")}
-\`\`\`
-
-### 3. search organization for related repositories
-
-**find repos with related keywords:**
-\`\`\`bash
-# search for repos matching components
-${Array.from(allComponents).slice(0, 2).map(comp =>
-  `gh search repos --owner ${githubOrg} "${comp}" --limit 10`
-).join("\n")}
-
-# search for database/schema repos
-gh search repos --owner ${githubOrg} "schema OR migration OR flyway OR liquibase" --limit 10
-
-# search for data processing repos
-gh search repos --owner ${githubOrg} "pipeline OR etl OR ingestion OR kafka" --limit 10
-
-# search for monitoring/metrics repos (if metrics label present)
-${allLabels.has("metrics") || allLabels.has("monitoring") ? `gh search repos --owner ${githubOrg} "metrics OR prometheus OR grafana" --limit 10` : "# (skip - no metrics label)"}
-\`\`\`
-
-### 4. check for database/schema dependencies
-
-\`\`\`bash
-# search for migration files in current repo
-find . -path "*/migrations/*" -o -path "*/flyway/*" -o -name "*migration*.sql"
-
-# search for entity/model definitions
-grep -r "@Entity\\|@Table\\|CREATE TABLE\\|ALTER TABLE" --include="*.java" --include="*.sql"
-
-# if db changes likely, check schema repos
-gh search repos --owner ${githubOrg} "database" --limit 5
-\`\`\`
-
-### 5. identify cross-service impact
-
-\`\`\`bash
-# search for api endpoint definitions (if api-related)
-grep -r "@RestController\\|@RequestMapping\\|@GetMapping\\|@PostMapping" --include="*.java"
-
-# search org for potential api consumers
-gh search repos --owner ${githubOrg} "${Array.from(allComponents).slice(0, 1).join("")}-client OR ${Array.from(allComponents).slice(0, 1).join("")}-consumer" --limit 10
-
-# check for shared libraries/sdks
-gh search repos --owner ${githubOrg} "sdk OR client OR lib" --limit 10
-\`\`\`
-
----
-
-## output format
+## output: code_analysis.json
 
 create a file called \`code_analysis.json\` with this structure:
 
 \`\`\`json
 {
-  "jira_ticket": "${ticket.key}",
-  "primary_repository": "${githubRepo}",
-  "analysis_date": "<ISO timestamp>",
-  "related_prs": [
-    {
-      "number": <pr_number>,
-      "title": "...",
-      "url": "...",
-      "state": "open|closed|merged",
-      "jira_keys": ["${ticket.key}", ...],
-      "relevance": "implementation pattern | blocker resolution | similar work",
-      "key_files_changed": ["path/to/file.java", ...]
-    }
-  ],
-  "related_commits": [
-    {
-      "sha": "abc123...",
-      "message": "...",
-      "author": "...",
-      "date": "...",
-      "files_changed": ["..."],
-      "relevance": "mentions technical term | implements similar feature"
-    }
-  ],
-  "code_files_found": [
-    {
-      "path": "src/path/to/File.java",
-      "relevance": "contains ${Array.from(technicalTerms).slice(0, 1).join("")} class | implements ${Array.from(allComponents).slice(0, 1).join("")}",
-      "key_sections": ["line 45-60: metrics implementation", "line 120-135: error handling"],
-      "last_modified": "...",
-      "last_modified_by": "..."
-    }
-  ],
-  "related_repositories": [
-    {
-      "name": "${githubOrg}/...",
-      "url": "...",
-      "reason": "database schema | api consumer | shared library",
-      "potential_impact": "may need coordinated changes | dependency update required",
-      "action_needed": "review for breaking changes | update version"
-    }
-  ],
-  "database_impact": {
-    "schema_changes_likely": true|false,
-    "migration_files_found": ["..."],
-    "affected_tables": ["..."],
-    "schema_repos_to_check": ["${githubOrg}/db-migrations"]
+  "ticket_key": "${ticket.key}",
+  "analysis_timestamp": "<iso 8601 timestamp>",
+
+  "github_findings": {
+    "related_prs": [
+      {
+        "number": 123,
+        "title": "...",
+        "state": "merged",
+        "merged_at": "2025-09-15",
+        "jira_keys": ["${ticket.key}"],
+        "confidence": {
+          "level": "high",
+          "score": 0.9,
+          "reasoning": "directly implements main ticket ${ticket.key}",
+          "source_tier": "main_ticket"
+        },
+        "relevance": "implementation pattern for ...",
+        "key_files": ["src/..."]
+      }
+    ],
+
+    "code_locations": [
+      {
+        "file": "src/path/to/file.java",
+        "lines": "45-120",
+        "last_modified": "2025-08-01",
+        "confidence": {
+          "level": "medium",
+          "score": 0.6,
+          "reasoning": "file exists and matches term from ticket, but no direct ticket reference in recent commits",
+          "source_tier": "code_search"
+        },
+        "relevance": "existing component mentioned in ticket"
+      }
+    ],
+
+    "cross_repo_dependencies": [
+      {
+        "repo": "${githubOrg}/example-repo",
+        "dependency_type": "api_consumer",
+        "impact_assessment": "breaking_change_possible",
+        "confidence": {
+          "level": "low",
+          "score": 0.4,
+          "reasoning": "inferred from imports, no explicit documentation found",
+          "source_tier": "code_inference"
+        },
+        "action_needed": "verify with team before deployment"
+      }
+    ]
   },
-  "cross_service_dependencies": [
-    {
-      "service_name": "...",
-      "repository": "${githubOrg}/...",
-      "dependency_type": "api consumer | shared database | message queue",
-      "impact": "breaking change | compatible | isolated"
+
+  "synthesis": {
+    "implementation_guidance": [
+      {
+        "recommendation": "follow pattern from pr #123",
+        "confidence": "high",
+        "code_example": "snippet or link to diff",
+        "applicability": "directly applicable - same component type"
+      }
+    ],
+
+    "known_conflicts": [
+      {
+        "description": "confluence doc suggests x, but recent pr uses y",
+        "resolution": "prefer recent pr pattern",
+        "confidence": "medium",
+        "action": "update confluence doc after implementation"
+      }
+    ],
+
+    "gaps": [
+      "no recent database migration files found - unclear if schema changes needed"
+    ],
+
+    "overall_confidence": {
+      "score": 0.72,
+      "assessment": "medium-high - clear implementation pattern from related work, but some uncertainty remains",
+      "human_review_needed": [
+        "verify database impact",
+        "confirm cross-service compatibility"
+      ]
     }
-  ],
-  "implementation_patterns": [
-    {
-      "source": "PR #123 (${depGraph.nodes.filter(n => n.status.toLowerCase() === "closed")[0]?.key || "related ticket"})",
-      "pattern": "used micrometer for metrics | added prometheus annotations",
-      "code_example": "snippet from pr diff",
-      "applicable": true|false
-    }
-  ],
-  "recommendations": [
-    "follow pattern from closed PR #123 for metrics implementation",
-    "coordinate with ${githubOrg}/data-pipeline team for schema changes",
-    "update api version in ${githubOrg}/client-sdk after deployment"
+  },
+
+  "next_steps": [
+    "review pr #123 diff for detailed implementation",
+    "check with dba team on schema changes (gap identified)",
+    "coordinate with consuming services (low confidence dependency)"
   ]
 }
 \`\`\`
 
-**important:** use actual data from your searches. if a search returns no results, note it. prioritize finding implementation patterns from closed related tickets.
+## quality checklist
+before outputting, verify:
+- [ ] every finding has explicit confidence with reasoning
+- [ ] gaps are noted rather than filled with assumptions
+- [ ] conflicts are flagged, not silently resolved
+- [ ] github evidence is dated (to assess recency)
+- [ ] recommendations distinguish "current state" from "planning" context
+- [ ] overall confidence score reflects actual evidence quality
+
+---
+
+## additional context
+
+${contextDiscovery && contextDiscovery.is_sparse_ticket ? `
+**note:** this ticket was flagged as sparse (minimal description/components). auto-discovery found:
+- ${contextDiscovery.similar_tickets.length} similar tickets: ${contextDiscovery.similar_tickets.slice(0, 3).map(t => t.key).join(", ")}${contextDiscovery.similar_tickets.length > 3 ? ` (${contextDiscovery.similar_tickets.length - 3} more)` : ""}
+- ${contextDiscovery.confluence_results.length} confluence pages: ${contextDiscovery.confluence_results.slice(0, 2).map(p => p.title).join(", ")}${contextDiscovery.confluence_results.length > 2 ? ` (${contextDiscovery.confluence_results.length - 2} more)` : ""}
+
+use these for additional context, but note lower confidence (inferred similarity, not direct references).
+` : ""}
+**important:** use actual data from your searches. if a search returns no results, note it explicitly in the gaps section. prioritize finding implementation patterns from closed related tickets (high confidence).
 `;
 
       const payload: z.infer<typeof DependencyAnalysisOutput> = {

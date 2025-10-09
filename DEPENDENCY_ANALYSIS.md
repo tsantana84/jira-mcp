@@ -509,7 +509,10 @@ the ai will:
 **stage 1: jira/confluence discovery**
 
 via gemini cli:
-- ask: "run dependency analysis on DMD-11937 and save results to jira_analysis.json"
+- ask: "run dependency analysis on DMD-11937 with:
+   - depth: 3
+   - include confluence docs updated in last 12 months
+   - save to jira_analysis.json"
 - ai will call `jira_dependency_analysis` and write the output file
 
 **stage 2: code analysis (via gemini cli in your repository)**
