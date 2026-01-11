@@ -8,6 +8,8 @@ simple, stdio-based mcp servers for atlassian jira and confluence (cloud, api to
 
 turn complex jira tickets into actionable implementation plans in 3 simple steps:
 
+![95wlim95wlim95wl](https://github.com/user-attachments/assets/4c6bf137-ac3b-4558-9430-f906f9c4a1cd)
+
 ### step 1: analyze jira dependencies
 
 in gemini cli, paste:
